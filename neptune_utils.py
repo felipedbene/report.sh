@@ -6,9 +6,9 @@ from botocore.awsrequest import AWSRequest
 
 # Configuration Constants
 REGION = os.getenv('AWS_REGION', 'us-east-1')
-NEPTUNE_ENDPOINT = os.getenv('NEPTUNE_ENDPOINT', '')
+NEPTUNE_ENDPOINT = os.getenv('NEPTUNE_ENDPOINT', 'db-neptune-12.cluster-cyenjim10cpi.us-east-1.neptune.amazonaws.com')
 BATCH_SIZE = int(os.getenv('BATCH_SIZE', '100'))
-S3_BUCKET = os.getenv('S3_BUCKET', '')
+S3_BUCKET = os.getenv('S3_BUCKET', 'awssso-benfelip')
 GRAPH_DATA_DIR = os.getenv('GRAPH_DATA_DIR', 'graph_data')
 
 # Environment classification
