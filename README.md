@@ -415,12 +415,10 @@ zstandard==0.23.0
 
 ## Future Enhancements
 
-- [ ] CloudFormation template for Neptune setup
 - [ ] Automated data loading pipeline
 - [ ] Real-time monitoring capabilities
 - [ ] Custom report templates
-- [ ] Integration with AWS Organizations
-- [ ] Automated cleanup procedures
+
 
 ## Contributing
 

@@ -1,345 +1,153 @@
-AWSTemplateFormatVersion: '2010-09-09'
-Description: 'AWS Neptune Stack with VPC for SSO Graph Analysis'
+AWSTemplateFormatVersion: "2010-09-09"
+Metadata:
+    Generator: "former2"
+Description: "Neptune DB Cluster with ARM64 instances"
 
 Parameters:
-  EnvironmentName:
-    Description: Environment name
+  DBClusterIdentifier:
     Type: String
-    Default: dev
+    Default: "db-neptune-1"
+    Description: "The identifier for the Neptune DB cluster"
 
-  NeptuneInstanceClass:
-    Description: Neptune instance class
+  DBInstanceClass:
     Type: String
-    Default: db.r5.large
+    Description: "The compute and memory capacity of the DB instance"
+    Default: "db.r6g.large"
     AllowedValues:
-      - db.r5.large
-      - db.r5.xlarge
-      - db.r5.2xlarge
-      - db.r5.4xlarge
-      - db.r5.8xlarge
-      - db.r5.12xlarge
+      - "db.r6g.large"     # 2 vCPU, 16 GiB RAM
+      - "db.r6g.xlarge"    # 4 vCPU, 32 GiB RAM
+      - "db.r6g.2xlarge"   # 8 vCPU, 64 GiB RAM
+      - "db.r6g.4xlarge"   # 16 vCPU, 128 GiB RAM
+      - "db.t4g.medium"    # 2 vCPU, 4 GiB RAM (burstable)
+
+  Environment:
+    Type: String
+    Default: "dev"
+    AllowedValues:
+      - "dev"
+      - "staging"
+      - "prod"
+    Description: "Environment type which helps determine instance size"
+
+  NeptunePort:
+    Type: Number
+    Default: 8182
+    Description: "The port number on which the Neptune DB accepts connections"
+
+  VpcId:
+    Type: AWS::EC2::VPC::Id
+    Description: "VPC where the Neptune cluster will be deployed"
+
+  PrivateSubnet1:
+    Type: AWS::EC2::Subnet::Id
+    Description: "First private subnet for Neptune cluster"
+
+  PrivateSubnet2:
+    Type: AWS::EC2::Subnet::Id
+    Description: "Second private subnet for Neptune cluster"
+
+  AvailabilityZone1:
+    Type: AWS::EC2::AvailabilityZone::Name
+    Description: "Availability Zone for the primary DB instance"
+
+  AvailabilityZone2:
+    Type: AWS::EC2::AvailabilityZone::Name
+    Description: "Availability Zone for the replica DB instance"
+
+  KmsKeyId:
+    Type: String
+    Description: "The KMS key ID for encryption"
+    Default: "c6fd0767-cf7f-4a3a-83a5-9856b2f0ce6d"
+    AllowedValues:
+      - "c6fd0767-cf7f-4a3a-83a5-9856b2f0ce6d"
+      - "key-id-2"
+      - "key-id-3"
+
+Conditions:
+  IsProduction: !Equals [!Ref Environment, "prod"]
 
 Resources:
-  # VPC
-  VPC:
-    Type: AWS::EC2::VPC
-    Properties:
-      CidrBlock: 10.0.0.0/16
-      EnableDnsHostnames: true
-      EnableDnsSupport: true
-      Tags:
-        - Key: Name
-          Value: !Sub ${EnvironmentName}-neptune-vpc
+    NeptuneSecurityGroup:
+        Type: AWS::EC2::SecurityGroup
+        Properties:
+            GroupDescription: Security group for Neptune cluster
+            VpcId: !Ref VpcId
+            SecurityGroupIngress:
+                - IpProtocol: tcp
+                  FromPort: !Ref NeptunePort
+                  ToPort: !Ref NeptunePort
+                  CidrIp: !GetAtt VpcId.CidrBlock
+            Tags:
+                - Key: Name
+                  Value: !Sub "${DBClusterIdentifier}-sg"
 
-  # Internet Gateway
-  InternetGateway:
-    Type: AWS::EC2::InternetGateway
-    Properties:
-      Tags:
-        - Key: Name
-          Value: !Sub ${EnvironmentName}-neptune-igw
+    NeptuneSubnetGroup:
+        Type: AWS::Neptune::DBSubnetGroup
+        Properties:
+            DBSubnetGroupDescription: Subnet group for Neptune cluster
+            SubnetIds: 
+                - !Ref PrivateSubnet1
+                - !Ref PrivateSubnet2
+            Tags:
+                - Key: Name
+                  Value: !Sub "${DBClusterIdentifier}-subnet-group"
 
-  AttachGateway:
-    Type: AWS::EC2::VPCGatewayAttachment
-    Properties:
-      VpcId: !Ref VPC
-      InternetGatewayId: !Ref InternetGateway
+    NeptuneDBCluster:
+        Type: "AWS::Neptune::DBCluster"
+        Properties:
+            BackupRetentionPeriod: !If [IsProduction, 7, 1]
+            DBClusterIdentifier: !Ref DBClusterIdentifier
+            DBClusterParameterGroupName: "default.neptune1.4"
+            DBSubnetGroupName: !Ref NeptuneSubnetGroup
+            Port: !Ref NeptunePort
+            PreferredBackupWindow: "07:54-08:24"
+            PreferredMaintenanceWindow: "mon:03:53-mon:04:23"
+            VpcSecurityGroupIds: 
+              - !Ref NeptuneSecurityGroup
+            StorageEncrypted: true
+            KmsKeyId: !Sub "arn:aws:kms:${AWS::Region}:${AWS::AccountId}:key/${KmsKeyId}"
+            IamAuthEnabled: true
+            EngineVersion: "1.4.3.0"
+            DeletionProtection: !If [IsProduction, true, false]
+            EnableCloudwatchLogsExports: 
+              - "audit"
+              - "slowquery"
+            Tags:
+                - Key: Name
+                  Value: !Sub "${DBClusterIdentifier}-cluster"
+                - Key: Environment
+                  Value: !Ref Environment
 
-  # Public Subnets
-  PublicSubnet1:
-    Type: AWS::EC2::Subnet
-    Properties:
-      VpcId: !Ref VPC
-      CidrBlock: 10.0.1.0/24
-      AvailabilityZone: !Select [0, !GetAZs ""]
-      Tags:
-        - Key: Name
-          Value: !Sub ${EnvironmentName}-neptune-public-1
-  # IAM Role for Neptune Load
-NeptuneLoadRole:
-  Type: AWS::IAM::Role
-  Properties:
-    RoleName: !Sub ${EnvironmentName}-neptune-load-role
-    AssumeRolePolicyDocument:
-      Version: '2012-10-17'
-      Statement:
-        - Effect: Allow
-          Principal:
-            Service: neptune-db.amazonaws.com
-          Action: sts:AssumeRole
-    ManagedPolicyArns:
-      - arn:aws:iam::aws:policy/service-role/AWSNeptuneFullAccess
-    Policies:
-      - PolicyName: S3Access
-        PolicyDocument:
-          Version: '2012-10-17'
-          Statement:
-            - Effect: Allow
-              Action:
-                - s3:Get*
-                - s3:List*
-    Properties:
-      VpcId: !Ref VPC
-      CidrBlock: 10.0.2.0/24
-      AvailabilityZone: !Select [1, !GetAZs ""]
-      Tags:
-        - Key: Name
-          Value: !Sub ${EnvironmentName}-neptune-public-2
+    PrimaryDBInstance:
+        Type: AWS::Neptune::DBInstance
+        Properties:
+            DBClusterIdentifier: !Ref NeptuneDBCluster
+            DBInstanceClass: !Ref DBInstanceClass
+            AvailabilityZone: !Ref AvailabilityZone1
+            Tags:
+                - Key: Name
+                  Value: !Sub "${DBClusterIdentifier}-primary"
 
-  # Private Subnets
-  PrivateSubnet1:
-    Type: AWS::EC2::Subnet
-    Properties:
-      VpcId: !Ref VPC
-      CidrBlock: 10.0.11.0/24
-      AvailabilityZone: !Select [0, !GetAZs ""]
-      Tags:
-        - Key: Name
-          Value: !Sub ${EnvironmentName}-neptune-private-1
-
-  PrivateSubnet2:
-    Type: AWS::EC2::Subnet
-    Properties:
-      VpcId: !Ref VPC
-      CidrBlock: 10.0.12.0/24
-      AvailabilityZone: !Select [1, !GetAZs ""]
-      Tags:
-        - Key: Name
-          Value: !Sub ${EnvironmentName}-neptune-private-2
-
-  # Public Route Table
-  PublicRouteTable:
-    Type: AWS::EC2::RouteTable
-    Properties:
-      VpcId: !Ref VPC
-      Tags:
-        - Key: Name
-          Value: !Sub ${EnvironmentName}-neptune-public-rt
-
-  PublicRoute:
-    Type: AWS::EC2::Route
-    DependsOn: AttachGateway
-    Properties:
-      RouteTableId: !Ref PublicRouteTable
-      DestinationCidrBlock: 0.0.0.0/0
-      GatewayId: !Ref InternetGateway
-
-  PublicSubnet1RouteTableAssociation:
-    Type: AWS::EC2::SubnetRouteTableAssociation
-    Properties:
-      SubnetId: !Ref PublicSubnet1
-      RouteTableId: !Ref PublicRouteTable
-
-  PublicSubnet2RouteTableAssociation:
-    Type: AWS::EC2::SubnetRouteTableAssociation
-    Properties:
-      SubnetId: !Ref PublicSubnet2
-      RouteTableId: !Ref PublicRouteTable
-
-  # NAT Gateway
-  NatGatewayEIP:
-    Type: AWS::EC2::EIP
-    DependsOn: AttachGateway
-    Properties:
-      Domain: vpc
-
-  NatGateway:
-    Type: AWS::EC2::NatGateway
-    Properties:
-      AllocationId: !GetAtt NatGatewayEIP.AllocationId
-      SubnetId: !Ref PublicSubnet1
-      Tags:
-        - Key: Name
-          Value: !Sub ${EnvironmentName}-neptune-nat
-
-  # Private Route Table
-  PrivateRouteTable:
-    Type: AWS::EC2::RouteTable
-    Properties:
-      VpcId: !Ref VPC
-      Tags:
-        - Key: Name
-          Value: !Sub ${EnvironmentName}-neptune-private-rt
-
-  PrivateRoute:
-    Type: AWS::EC2::Route
-    Properties:
-      RouteTableId: !Ref PrivateRouteTable
-      DestinationCidrBlock: 0.0.0.0/0
-      NatGatewayId: !Ref NatGateway
-
-  PrivateSubnet1RouteTableAssociation:
-    Type: AWS::EC2::SubnetRouteTableAssociation
-    Properties:
-      SubnetId: !Ref PrivateSubnet1
-      RouteTableId: !Ref PrivateRouteTable
-
-  PrivateSubnet2RouteTableAssociation:
-    Type: AWS::EC2::SubnetRouteTableAssociation
-    Properties:
-      SubnetId: !Ref PrivateSubnet2
-      RouteTableId: !Ref PrivateRouteTable
-
-  # Neptune Subnet Group
-  NeptuneSubnetGroup:
-    Type: AWS::Neptune::DBSubnetGroup
-    Properties:
-      DBSubnetGroupDescription: Subnet group for Neptune database
-      SubnetIds: 
-        - !Ref PrivateSubnet1
-        - !Ref PrivateSubnet2
-
-  # Neptune Security Group
-  NeptuneSecurityGroup:
-    Type: AWS::EC2::SecurityGroup
-    Properties:
-      GroupDescription: Security group for Neptune database
-      VpcId: !Ref VPC
-      SecurityGroupIngress:
-        - IpProtocol: tcp
-          FromPort: 8182
-          ToPort: 8182
-          CidrIp: 10.0.0.0/16
-      Tags:
-        - Key: Name
-          Value: !Sub ${EnvironmentName}-neptune-sg
-
-  # Neptune Parameter Group
-  NeptuneClusterParameterGroup:
-    Type: AWS::Neptune::DBClusterParameterGroup
-    Properties:
-      Family: neptune1
-      Description: Neptune cluster parameter group
-      Parameters:
-        neptune_enable_audit_log: '1'
-
-  # Neptune Instance Parameter Group
-  NeptuneInstanceParameterGroup:
-    Type: AWS::Neptune::DBParameterGroup
-    Properties:
-      Family: neptune1
-      Description: Neptune instance parameter group
-      Parameters: {}
-
-  # Neptune Cluster
-  NeptuneCluster:
-    Type: AWS::Neptune::DBCluster
-    Properties:
-      DBClusterIdentifier: !Sub ${EnvironmentName}-sso-graph
-      DBClusterParameterGroupName: !Ref NeptuneClusterParameterGroup
-      DBSubnetGroupName: !Ref NeptuneSubnetGroup
-      VpcSecurityGroupIds:
-        - !Ref NeptuneSecurityGroup
-      Port: 8182
-      IamAuthEnabled: true
-      EnableCloudwatchLogsExports:
-        - audit
-
-  # Neptune Primary Instance
-  NeptunePrimaryInstance:
-    Type: AWS::Neptune::DBInstance
-    Properties:
-      DBInstanceClass: !Ref NeptuneInstanceClass
-      DBClusterIdentifier: !Ref NeptuneCluster
-      DBParameterGroupName: !Ref NeptuneInstanceParameterGroup
-      AutoMinorVersionUpgrade: true
-      Tags:
-        - Key: Name
-          Value: !Sub ${EnvironmentName}-sso-graph-primary
-
-  # IAM Role for Neptune Load
-  NeptuneLoadRole:
-    Type: AWS::IAM::Role
-    Properties:
-      RoleName: !Sub ${EnvironmentName}-neptune-load-role
-      AssumeRolePolicyDocument:
-        Version: '2012-10-17'
-        Statement:
-          - Effect: Allow
-            Principal:
-              Service: neptune.amazonaws.com
-            Action: sts:AssumeRole
-      ManagedPolicyArns:
-        - arn:aws:iam::aws:policy/service-role/AWSNeptuneFullAccess
-      Policies:
-        - PolicyName: S3Access
-          PolicyDocument:
-            Version: '2012-10-17'
-            Statement:
-              - Effect: Allow
-                Action:
-                  - s3:Get*
-                  - s3:List*
-                Resource:
-                  - arn:aws:s3:::mc-a182428597156-internal-us-east-1
-                  - arn:aws:s3:::mc-a182428597156-internal-us-east-1/*
-
-  # VPC Endpoint for S3
-  S3VPCEndpoint:
-    Type: AWS::EC2::VPCEndpoint
-    Properties:
-      PolicyDocument:
-        Version: '2012-10-17'
-        Statement:
-          - Effect: Allow
-            Principal: '*'
-            Action:
-              - s3:Get*
-              - s3:List*
-            Resource:
-              - arn:aws:s3:::mc-a182428597156-internal-us-east-1
-              - arn:aws:s3:::mc-a182428597156-internal-us-east-1/*
-      RouteTableIds:
-        - !Ref PrivateRouteTable
-      ServiceName: !Sub com.amazonaws.${AWS::Region}.s3
-      VpcId: !Ref VPC
-
+    ReplicaDBInstance:
+        Type: AWS::Neptune::DBInstance
+        Condition: IsProduction
+        Properties:
+            DBClusterIdentifier: !Ref NeptuneDBCluster
+            DBInstanceClass: !Ref DBInstanceClass
+            AvailabilityZone: !Ref AvailabilityZone2
+            Tags:
+                - Key: Name
+                  Value: !Sub "${DBClusterIdentifier}-replica"
 
 Outputs:
-  VpcId:
-    Description: VPC ID
-    Value: !Ref VPC
-    Export:
-      Name: !Sub ${AWS::StackName}-VpcId
+    ClusterEndpoint:
+        Description: "Neptune Cluster Endpoint"
+        Value: !GetAtt NeptuneDBCluster.Endpoint
 
-  PrivateSubnet1:
-    Description: Private Subnet 1 ID
-    Value: !Ref PrivateSubnet1
-    Export:
-      Name: !Sub ${AWS::StackName}-PrivateSubnet1
+    ReaderEndpoint:
+        Description: "Neptune Reader Endpoint"
+        Value: !GetAtt NeptuneDBCluster.ReadEndpoint
 
-  PrivateSubnet2:
-    Description: Private Subnet 2 ID
-    Value: !Ref PrivateSubnet2
-    Export:
-      Name: !Sub ${AWS::StackName}-PrivateSubnet2
-
-  NeptuneClusterEndpoint:
-    Description: Neptune cluster endpoint
-    Value: !GetAtt NeptuneCluster.Endpoint
-    Export:
-      Name: !Sub ${AWS::StackName}-ClusterEndpoint
-
-  NeptuneClusterReadEndpoint:
-    Description: Neptune cluster read endpoint
-    Value: !GetAtt NeptuneCluster.ReadEndpoint
-    Export:
-      Name: !Sub ${AWS::StackName}-ClusterReadEndpoint
-
-  NeptuneClusterPort:
-    Description: Neptune cluster port
-    Value: !GetAtt NeptuneCluster.Port
-    Export:
-      Name: !Sub ${AWS::StackName}-ClusterPort
-
-  NeptuneLoadRoleArn:
-    Description: IAM role ARN for Neptune Loader
-    Value: !GetAtt NeptuneLoadRole.Arn
-    Export:
-      Name: !Sub ${AWS::StackName}-LoadRoleArn
-
-  NeptuneSecurityGroupId:
-    Description: Security group ID for Neptune cluster
-    Value: !Ref NeptuneSecurityGroup
-    Export:
-      Name: !Sub ${AWS::StackName}-SecurityGroupId
+    NeptuneSecurityGroupId:
+        Description: "ID of the Neptune Security Group"
+        Value: !Ref NeptuneSecurityGroup
