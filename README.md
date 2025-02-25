@@ -14,18 +14,18 @@ graph TD
     F --> G[Excel Reports]
     F --> H[HTML Reports]
     
-    subgraph "Data Collection"
+    subgraph "g_collect.py"
         A
         B
         C
     end
     
-    subgraph "Data Storage & Processing"
+    subgraph "neptune.yaml"
         D
         E
     end
     
-    subgraph "Reporting"
+    subgraph "import_json_data.py && build_report.py"
         F
         G
         H
@@ -36,13 +36,13 @@ graph TD
 
 This project provides a solution for extracting, analyzing, and reporting AWS SSO access patterns across your organization. It consists of three main components:
 
-1. **SSO Data Extractor**: Python script to collect SSO configuration data
-2. **Graph Database**: Amazon Neptune instance for storing and querying relationships
-3. **Analysis & Reporting**: Generation of detailed access reports in HTML and Excel formats
+1. **SSO Data Extractor**: Python script to collect SSO configuration data (Must run in the account where SSO is, works with cloudshell)
+2. **Graph Database**: Amazon Neptune instance for storing and querying relationships.
+3. **Analysis & Reporting**: Generation of detailed access reports in HTML and Excel formats.
 
 ## Prerequisites
 
-- Python 3.7+
+- Python 3.10+
 - AWS CLI configured with appropriate permissions
 - Access to AWS SSO
 - Amazon Neptune instance
@@ -84,6 +84,33 @@ This will generate JSON files containing:
 - Permission sets
 - Account assignments
 
+Sample `edges.json` :
+```json
+  {
+    "from": "USER_44c834d8-60d1-xxxx-fd5e-12865077a5ba",
+    "to": "GROUP_040894c8-c021-xxxx-365e-420a9fcf9dd7",
+    "label": "MEMBER_OF",
+    "properties": {
+      "timestamp": "2025-02-25T01:03:53.255730"
+    }
+```
+
+Vertices : 
+
+```json
+[
+  {
+    "id": "USER_040814e8-1001-xxxx-66c0-49f9a03681b1",
+    "label": "User",
+    "properties": {
+      "userId": "040814e8-1001-xxxx-66c0-49f9a03681b1",
+      "userName": "nobody.noone@example.com",
+      "email": "nobody.noone@example.com",
+      "type": "USER"
+    }
+  },
+```
+
 ### 2. Load Data into Neptune
 The data loading process is currently manual. Future versions will include automated loading.
 
@@ -112,17 +139,12 @@ The system generates two types of reports:
 ## Project Structure
 
 ```
-aws-sso-matrix/
-├── src/
-│   ├── sso_extractor.py
-│   ├── report_generator.py
-│   └── utils/
-│       ├── neptune_utils.py
-│       └── analysis_utils.py
-├── tests/
-├── docs/
-├── requirements.txt
-└── README.md
+/
+├─ build_report.py
+├─ g_collect.py
+├─ import_json_data.py
+├─ requirements.txt
+└─ README.md
 ```
 
 ## Library dependency :
