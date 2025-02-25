@@ -4,12 +4,9 @@ import boto3
 import json
 import datetime
 import os
-import logging
 from dataclasses import dataclass
 from typing import List, Dict
-
-logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
-logger = logging.getLogger(__name__)
+from neptune_utils import debug_log
 
 @dataclass
 class Vertex:
@@ -51,7 +48,7 @@ class SSOGraphCollector:
         }
 
     def _collect_users(self):
-        logger.info("Collecting Users...")
+        debug_log("Collecting Users...")
         paginator = self.identitystore.get_paginator('list_users')
         for page in paginator.paginate(IdentityStoreId=self.identity_store_id):
             for user in page['Users']:
@@ -67,7 +64,7 @@ class SSOGraphCollector:
                 ))
 
     def _collect_groups(self):
-        logger.info("Collecting Groups...")
+        debug_log("Collecting Groups...")
         paginator = self.identitystore.get_paginator('list_groups')
         for page in paginator.paginate(IdentityStoreId=self.identity_store_id):
             for group in page['Groups']:
@@ -82,7 +79,7 @@ class SSOGraphCollector:
                 ))
 
     def _collect_group_memberships(self):
-        logger.info("Collecting Group Memberships...")
+        debug_log("Collecting Group Memberships...")
         for group in [v for v in self.vertices if v.label == "Group"]:
             paginator = self.identitystore.get_paginator('list_group_memberships')
             for page in paginator.paginate(
@@ -100,7 +97,7 @@ class SSOGraphCollector:
                     ))
 
     def _collect_accounts(self):
-        logger.info("Collecting AWS Accounts...")
+        debug_log("Collecting AWS Accounts...")
         paginator = self.organizations.get_paginator('list_accounts')
         for page in paginator.paginate():
             for account in page['Accounts']:
@@ -116,7 +113,7 @@ class SSOGraphCollector:
                 ))
 
     def _collect_permission_sets(self):
-        logger.info("Collecting Permission Sets...")
+        debug_log("Collecting Permission Sets...")
         paginator = self.sso_admin.get_paginator('list_permission_sets')
         for page in paginator.paginate(InstanceArn=self.instance_arn):
             for pset_arn in page['PermissionSets']:
@@ -137,7 +134,7 @@ class SSOGraphCollector:
                 ))
 
     def _collect_assignments(self):
-        logger.info("Collecting Assignments...")
+        debug_log("Collecting Assignments...")
         for pset in [v for v in self.vertices if v.label == "PermissionSet"]:
             accounts_paginator = self.sso_admin.get_paginator('list_accounts_for_provisioned_permission_set')
             for accounts_page in accounts_paginator.paginate(
@@ -175,8 +172,10 @@ class SSOGraphCollector:
                                 }
                             ))
 
+from neptune_utils import GRAPH_DATA_DIR
+
 def save_graph_data(data, directory):
-    graph_dir = os.path.join(directory, "graph_data")
+    graph_dir = os.path.join(directory, GRAPH_DATA_DIR)
     os.makedirs(graph_dir, exist_ok=True)
 
     # Save vertices

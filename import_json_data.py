@@ -1,103 +1,121 @@
-def load_edges_batch(g, edges, batch_size=100):
+import boto3
+import json
+import os
+from gremlin_python.process.traversal import T
+from gremlin_python.structure.graph import Graph
+from neptune_utils import get_neptune_auth_headers, BATCH_SIZE, debug_log, S3_BUCKET
+from neptune_connection import create_neptune_connection
+
+def load_json_from_s3():
+    """Load graph data from S3 bucket"""
+    try:
+        debug_log("Loading data from S3...")
+        s3 = boto3.client('s3')
+        vertices = []
+        edges = []
+
+        # Load vertices
+        vertices_obj = s3.get_object(Bucket=S3_BUCKET, Key='graph_data/vertices.json')
+        vertices_data = json.loads(vertices_obj['Body'].read().decode('utf-8'))
+        vertices.extend(vertices_data)
+
+        # Load edges
+        edges_obj = s3.get_object(Bucket=S3_BUCKET, Key='graph_data/edges.json')
+        edges_data = json.loads(edges_obj['Body'].read().decode('utf-8'))
+        edges.extend(edges_data)
+        
+        debug_log(f"Loaded {len(vertices)} vertices and {len(edges)} edges from S3")
+        return vertices, edges
+    except Exception as e:
+        debug_log(f"Error loading data from S3: {str(e)}")
+        raise
+
+def load_vertices_batch(g, vertices):
+    """Load vertices with proper error handling"""
+    try:
+        debug_log("Loading vertices...")
+        for vertex in vertices:
+            try:
+                g.addV(vertex['label'])\
+                    .property(T.id, vertex['id'])\
+                    .next()
+                for k, v in vertex['properties'].items():
+                    g.V(vertex['id'])\
+                        .property(k, v)\
+                        .next()
+            except Exception as e:
+                debug_log(f"Error loading vertex {vertex['id']}: {str(e)}")
+                continue
+    except Exception as e:
+        debug_log(f"Error in vertex loading batch: {str(e)}")
+        raise
+
+def load_edges_batch(g, edges, batch_size=BATCH_SIZE):
     """Load edges with proper relationship handling"""
-    print("\nLoading edges...")
+    debug_log("Loading edges...")
     successful = 0
     failed = 0
-    
-    for i in range(0, len(edges), batch_size):
-        batch = edges[i:i + batch_size]
+    current_batch = []
+
+    try:
+        for edge in edges:
+            current_batch.append(edge)
+            if len(current_batch) >= batch_size:
+                successful_batch, failed_batch = process_edge_batch(g, current_batch)
+                successful += successful_batch
+                failed += failed_batch
+                current_batch = []
+
+        if current_batch:
+            successful_batch, failed_batch = process_edge_batch(g, current_batch)
+            successful += successful_batch
+            failed += failed_batch
+
+        debug_log(f"Edge loading complete. Successful: {successful}, Failed: {failed}")
+    except Exception as e:
+        debug_log(f"Error in edge loading: {str(e)}")
+        raise
+
+def process_edge_batch(g, batch):
+    """Process a batch of edges"""
+    debug_log(f"Processing batch of {len(batch)} edges")
+    successful = 0
+    failed = 0
+
+    try:
         for edge in batch:
             try:
-                label = edge['label']
-                
-                if label == 'MEMBER_OF':
-                    # User to Group relationship
-                    g.V().has('User', 'userId', edge['from'].replace('USER_', ''))\
-                        .addE(label)\
-                        .to(__.V().has('Group', 'groupId', edge['to'].replace('GROUP_', '')))\
-                        .property('timestamp', edge['properties']['timestamp'])\
-                        .next()
-                
-                elif label == 'HAS_ACCESS_TO':
-                    # Group to Account relationship
-                    g.V().has('Group', 'groupId', edge['from'].replace('GROUP_', ''))\
-                        .addE(label)\
-                        .to(__.V().has('Account', 'accountId', edge['to'].replace('ACCOUNT_', '')))\
-                        .property('timestamp', edge['properties']['timestamp'])\
-                        .property('permissionSetArn', edge['properties']['permissionSetArn'])\
-                        .next()
-                
-                elif label == 'HAS_PERMISSION':
-                    # Group to PermissionSet relationship
-                    g.V().has('Group', 'groupId', edge['from'].replace('GROUP_', ''))\
-                        .addE(label)\
-                        .to(__.V().has('PermissionSet', 'arn', edge['to'].replace('PERMISSION_SET_', '')))\
-                        .property('timestamp', edge['properties']['timestamp'])\
-                        .next()
-                
+                g.V(edge['from_vertex'])\
+                    .addE(edge['label'])\
+                    .to(g.V(edge['to_vertex']))\
+                    .next()
                 successful += 1
-                if successful % 100 == 0:
-                    print(f"Successfully loaded {successful} edges")
-                    
             except Exception as e:
+                debug_log(f"Error adding edge from {edge['from_vertex']} to {edge['to_vertex']}: {str(e)}")
                 failed += 1
-                if failed < 5:
-                    print(f"\nError in edge ({label}):")
-                    print(json.dumps(edge, indent=2))
-                    print(f"Error: {str(e)}")
-        
-        print(f"Processed batch ending at {i + len(batch)}")
-    
-    # Print statistics by edge type
-    print("\nEdge loading summary:")
-    edge_counts = g.E().groupCount().by(T.label).next()
-    for label, count in edge_counts.items():
-        print(f"{label}: {count}")
-    
-    print(f"\nTotal successful: {successful}")
-    print(f"Total failed: {failed}")
-    
+                continue
+    except Exception as e:
+        debug_log(f"Batch processing error: {str(e)}")
+        raise
+
     return successful, failed
 
-# Run the loading process
-try:
-    print("Connecting to Neptune...")
-    g, conn = connect_to_neptune()
-    
-    print("\nLoading edges...")
-    vertices, edges = load_json_from_s3()
-    edge_load_success, edge_load_failed = load_edges_batch(g, edges)
-    
-    # Verify the relationships
-    print("\nVerifying relationships...")
-    
-    # Check MEMBER_OF relationships
-    member_of = g.E().hasLabel('MEMBER_OF').count().next()
-    print(f"MEMBER_OF edges: {member_of}")
-    
-    # Check HAS_ACCESS_TO relationships
-    has_access = g.E().hasLabel('HAS_ACCESS_TO').count().next()
-    print(f"HAS_ACCESS_TO edges: {has_access}")
-    
-    # Check HAS_PERMISSION relationships
-    has_permission = g.E().hasLabel('HAS_PERMISSION').count().next()
-    print(f"HAS_PERMISSION edges: {has_permission}")
-    
-    # Sample complete path
-    print("\nSample access path:")
-    path = g.V().hasLabel('User')\
-        .out('MEMBER_OF')\
-        .out('HAS_ACCESS_TO')\
-        .path()\
-        .by('userName')\
-        .by('groupName')\
-        .by('accountName')\
-        .limit(1)\
-        .next()
-    
-    print(f"User -> Group -> Account path: {path}")
-    
-finally:
-    if conn:
-        conn.close()
-        print("\nConnection closed")
+def main():
+    """Main execution function"""
+    try:
+        vertices, edges = load_json_from_s3()
+        conn = create_neptune_connection()
+        g = Graph().traversal().withRemote(conn)
+
+        load_vertices_batch(g, vertices)
+        load_edges_batch(g, edges)
+
+    except Exception as e:
+        debug_log(f"Error in main execution: {str(e)}")
+        raise
+    finally:
+        if 'conn' in locals():
+            conn.close()
+
+if __name__ == '__main__':
+    main()
