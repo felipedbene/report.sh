@@ -2,6 +2,10 @@
 
 A comprehensive solution for analyzing and visualizing AWS SSO permissions and access patterns across your organization.
 
+Sample Report:
+
+
+
 ## Architecture Diagram
 
 ```mermaid
@@ -45,8 +49,8 @@ This project provides a solution for extracting, analyzing, and reporting AWS SS
 - Python 3.10+
 - AWS CLI configured with appropriate permissions
 - Access to AWS SSO
-- Amazon Neptune instance
-- Required Python packages:
+- Amazon Neptune instance (Cloudformation included)
+- Required Python packages (install using pip or uv):
   ```
   boto3
   pandas
