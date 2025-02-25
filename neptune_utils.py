@@ -6,7 +6,8 @@ from botocore.awsrequest import AWSRequest
 
 # Configuration Constants
 REGION = os.getenv('AWS_REGION', 'us-east-1')
-NEPTUNE_ENDPOINT = os.getenv('NEPTUNE_ENDPOINT', 'db-neptune-12.cluster-cyenjim10cpi.us-east-1.neptune.amazonaws.com')
+NEPTUNE_ENDPOINT = os.getenv('NEPTUNE_ENDPOINT', 
+    'db-neptune-12.cluster-cyenjim10cpi.us-east-1.neptune.amazonaws.com')
 BATCH_SIZE = int(os.getenv('BATCH_SIZE', '100'))
 S3_BUCKET = os.getenv('S3_BUCKET', 'awssso-benfelip')
 GRAPH_DATA_DIR = os.getenv('GRAPH_DATA_DIR', 'graph_data')
@@ -36,10 +37,15 @@ def get_neptune_auth_headers():
         request = AWSRequest(method='GET', url=f'wss://{NEPTUNE_ENDPOINT}:8182/gremlin')
         auth.add_auth(request)
         
-        return {
+        headers = {
             'Host': f'{NEPTUNE_ENDPOINT}:8182',
-            **request.headers
         }
+        # Add only the necessary SigV4 headers
+        for key in ['Authorization', 'X-Amz-Date', 'X-Amz-Security-Token']:
+            if key in request.headers:
+                headers[key] = request.headers[key]
+                
+        return headers
     except Exception as e:
         debug_log(f"Error generating Neptune auth headers: {str(e)}")
         raise

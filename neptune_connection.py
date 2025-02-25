@@ -15,10 +15,16 @@ def create_neptune_connection():
     """
     try:
         debug_log(f"Connecting to Neptune at {NEPTUNE_ENDPOINT}")
+        # Create a connection without headers_supplier
+        # headers_supplier is not supported in newer gremlin-python versions
+        # Instead, we'll use the connection without headers for IAM auth
+        # or pass static headers if needed
+        headers = get_neptune_auth_headers()
         return client.Client(
             f'wss://{NEPTUNE_ENDPOINT}:8182/gremlin',
             'g',
-            headers_supplier=get_neptune_auth_headers
+            message_serializer=client.serializer.GraphSONSerializersV2d0(),
+            headers=headers
         )
     except GremlinServerError as e:
         debug_log(f"Failed to connect to Neptune: {str(e)}")
