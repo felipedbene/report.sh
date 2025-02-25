@@ -3,7 +3,7 @@ import json
 import os
 from gremlin_python.process.traversal import T
 from gremlin_python.structure.graph import Graph
-from neptune_utils import get_neptune_auth_headers, BATCH_SIZE, debug_log, S3_BUCKET
+from neptune_utils import get_neptune_auth_headers, BATCH_SIZE, debug_log, S3_BUCKET, clear_neptune_database
 from neptune_connection import create_neptune_connection
 
 def load_json_from_s3():
@@ -36,13 +36,14 @@ def load_vertices_batch(g, vertices):
         debug_log("Loading vertices...")
         for vertex in vertices:
             try:
+                # Using submit() instead of next() for client connection
                 g.addV(vertex['label'])\
                     .property(T.id, vertex['id'])\
-                    .next()
+                    .toList()
                 for k, v in vertex['properties'].items():
                     g.V(vertex['id'])\
                         .property(k, v)\
-                        .next()
+                        .toList()
             except Exception as e:
                 debug_log(f"Error loading vertex {vertex['id']}: {str(e)}")
                 continue
@@ -88,7 +89,7 @@ def process_edge_batch(g, batch):
                 g.V(edge['from_vertex'])\
                     .addE(edge['label'])\
                     .to(g.V(edge['to_vertex']))\
-                    .next()
+                    .toList()
                 successful += 1
             except Exception as e:
                 debug_log(f"Error adding edge from {edge['from_vertex']} to {edge['to_vertex']}: {str(e)}")
@@ -106,6 +107,9 @@ def main():
         vertices, edges = load_json_from_s3()
         conn = create_neptune_connection()
         g = Graph().traversal().withRemote(conn)
+        
+        # Clear database before importing new data
+        clear_neptune_database(g)
 
         load_vertices_batch(g, vertices)
         load_edges_batch(g, edges)

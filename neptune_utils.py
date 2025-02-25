@@ -22,6 +22,21 @@ ENVIRONMENTS = {
 def debug_log(message):
     """Unified debug logging function."""
     print(f"DEBUG: {message}")
+    
+def clear_neptune_database(g):
+    """Clear all data from Neptune database.
+    
+    Args:
+        g: Neptune graph traversal source
+    """
+    debug_log("Clearing all data from Neptune database...")
+    try:
+        # Using toList() instead of iterate() to ensure traversal is properly executed
+        g.V().drop().toList()
+        debug_log("Successfully cleared all vertices and edges from the database")
+    except Exception as e:
+        debug_log(f"Error clearing database: {str(e)}")
+        raise
 
 def get_neptune_auth_headers():
     """Generate AWS SigV4 authentication headers for Neptune database access.
