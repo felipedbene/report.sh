@@ -184,8 +184,24 @@ def load_vertices(g, vertices, error_logger):
     print(f"Total failed: {failed}")
     return successful, failed
 
-def load_edges_batch(g, edges, batch_size, error_logger):
-    """Load edges with proper relationship handling"""
+def clean_entity_id(entity_id, entity_type):
+    """Clean entity IDs by removing prefixes and handling special cases"""
+    if entity_type == 'User':
+        # Handle the special case of IDs starting with '90676c734f-'
+        cleaned_id = entity_id.replace('USER_', '')
+        if cleaned_id.startswith('90676c734f-'):
+            cleaned_id = cleaned_id.replace('90676c734f-', '')
+        return cleaned_id
+    elif entity_type == 'Group':
+        return entity_id.replace('GROUP_', '')
+    elif entity_type == 'Account':
+        return entity_id.replace('ACCOUNT_', '')
+    elif entity_type == 'PermissionSet':
+        return entity_id.replace('PERMISSION_SET_', '')
+    return entity_id
+
+def load_edges_batch(g, edges, batch_size=DEFAULTS["BATCH_SIZE"], error_logger=None):
+    """Load edges with proper relationship handling and deduplication"""
     if not edges:
         print("No edges to load!")
         return 0, 0
@@ -193,7 +209,9 @@ def load_edges_batch(g, edges, batch_size, error_logger):
     print(f"\nLoading {len(edges)} edges...")
     successful = 0
     failed = 0
-    edge_patterns = {}  # Track patterns in edge IDs
+    
+    # Track processed edges to avoid duplicates
+    processed_edges = set()
     
     for i in range(0, len(edges), batch_size):
         batch = edges[i:i + batch_size]
@@ -205,58 +223,64 @@ def load_edges_batch(g, edges, batch_size, error_logger):
                 from_id = edge['from']
                 to_id = edge['to']
                 
-                # Track patterns for debugging
-                from_prefix = from_id.split('-')[0]
-                edge_patterns[from_prefix] = edge_patterns.get(from_prefix, 0) + 1
+                # Create unique edge identifier
+                edge_key = f"{from_id}|{label}|{to_id}|{edge['properties'].get('permissionSetArn', '')}"
                 
+                # Skip if we've already processed this edge
+                if edge_key in processed_edges:
+                    continue
+                
+                # Clean IDs based on entity type
                 if label == 'MEMBER_OF':
-                    # Verify vertices exist
-                    from_exists = g.V().has('User', 'userId', from_id.replace('USER_', '')).count().next() > 0
-                    to_exists = g.V().has('Group', 'groupId', to_id.replace('GROUP_', '')).count().next() > 0
+                    from_clean = clean_entity_id(from_id, 'User')
+                    to_clean = clean_entity_id(to_id, 'Group')
+                    
+                    # Verify vertices exist before creating edge
+                    from_exists = g.V().has('User', 'userId', from_clean).count().next() > 0
+                    to_exists = g.V().has('Group', 'groupId', to_clean).count().next() > 0
                     
                     if not from_exists or not to_exists:
-                        error_logger.log_debug("Missing vertices for edge:", {
-                            "edge": edge,
-                            "from_exists": from_exists,
-                            "to_exists": to_exists
-                        })
-                        raise Exception("One or both vertices not found")
+                        raise Exception(f"Missing vertices: User exists: {from_exists}, Group exists: {to_exists}")
                     
-                    # Create edge
-                    g.V().has('User', 'userId', from_id.replace('USER_', ''))\
+                    g.V().has('User', 'userId', from_clean)\
                         .addE(label)\
-                        .to(__.V().has('Group', 'groupId', to_id.replace('GROUP_', '')))\
+                        .to(__.V().has('Group', 'groupId', to_clean))\
                         .property('timestamp', edge['properties']['timestamp'])\
                         .next()
                 
                 elif label == 'HAS_ACCESS_TO':
-                    g.V().has('Group', 'groupId', from_id.replace('GROUP_', ''))\
+                    from_clean = clean_entity_id(from_id, 'Group')
+                    to_clean = clean_entity_id(to_id, 'Account')
+                    
+                    g.V().has('Group', 'groupId', from_clean)\
                         .addE(label)\
-                        .to(__.V().has('Account', 'accountId', to_id.replace('ACCOUNT_', '')))\
+                        .to(__.V().has('Account', 'accountId', to_clean))\
                         .property('timestamp', edge['properties']['timestamp'])\
                         .property('permissionSetArn', edge['properties']['permissionSetArn'])\
                         .next()
                 
                 elif label == 'HAS_PERMISSION':
-                    g.V().has('Group', 'groupId', from_id.replace('GROUP_', ''))\
+                    from_clean = clean_entity_id(from_id, 'Group')
+                    to_clean = clean_entity_id(to_id, 'PermissionSet')
+                    
+                    g.V().has('Group', 'groupId', from_clean)\
                         .addE(label)\
-                        .to(__.V().has('PermissionSet', 'arn', to_id.replace('PERMISSION_SET_', '')))\
+                        .to(__.V().has('PermissionSet', 'arn', to_clean))\
                         .property('timestamp', edge['properties']['timestamp'])\
                         .next()
                 
+                processed_edges.add(edge_key)
                 successful += 1
                 if successful % 100 == 0:
                     print(f"Successfully loaded {successful} edges")
                     
             except Exception as e:
                 failed += 1
-                error_logger.log_error(f"Error in edge ({label}):", {
-                    "edge": edge,
-                    "error": str(e)
-                })
-    
-    # Log edge pattern analysis
-    error_logger.log_debug("Edge ID patterns:", edge_patterns)
+                if error_logger:
+                    error_logger.log_error(f"Error in edge ({label}):", {
+                        "edge": edge,
+                        "error": str(e) if str(e) else "Vertex not found or other database error"
+                    })
     
     print("\nEdge loading summary:")
     try:
@@ -268,6 +292,8 @@ def load_edges_batch(g, edges, batch_size, error_logger):
     
     print(f"\nTotal successful: {successful}")
     print(f"Total failed: {failed}")
+    print(f"Duplicate edges skipped: {len(edges) - len(processed_edges)}")
+    
     return successful, failed
 
 def clean_graph(g):
