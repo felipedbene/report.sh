@@ -1,28 +1,28 @@
 # AWS SSO Access Analysis and Graph Database Tool
 
-A comprehensive tool for analyzing AWS Single Sign-On (SSO) access patterns using Amazon Neptune graph database. This solution helps identify potential security risks, toxic access combinations, and provides detailed access reports for users and organizations.
+A comprehensive tool for analyzing AWS Single Sign-On (SSO) access patterns using Amazon Neptune graph database. This solution helps security teams identify potential security risks, toxic access combinations, and provides detailed access reports for AWS SSO environments.
 
-The tool collects data from AWS SSO, AWS Identity Store, and AWS Organizations to build a graph representation of user access patterns. It analyzes cross-environment access, administrative privileges, and extensive account access patterns to identify potential security risks. The solution generates detailed HTML reports that provide insights into user access patterns and potential security concerns.
+The tool collects data from AWS SSO, AWS Identity Store, and AWS Organizations to build a graph representation of user access patterns. It analyzes cross-environment access, administrative privileges, and extensive account access patterns to identify potential security risks. The solution generates detailed HTML reports for both individual users and organization-wide access patterns, making it easier to maintain security compliance and perform access reviews.
 
 ## Repository Structure
 ```
 .
-├── devfile.yaml              # Development environment configuration
+├── devfile.yaml              # Development environment configuration for container-based development
 ├── docs/                     # Documentation files including infrastructure diagrams
-├── g_collect.py             # AWS SSO data collection script
-├── generate_report.py       # HTML report generation for user access analysis
-├── import_json_data.py      # S3 to Neptune data import utility
+├── g_collect.py             # Collects AWS SSO data and builds graph representation
+├── generate_report.py       # Generates HTML reports for user and organization access analysis
+├── import_json_data.py      # Imports graph data from S3 into Neptune database
 ├── neptune_connection.py    # Neptune database connection utilities
-├── neptune_utils.py         # Shared Neptune utility functions
+├── neptune_utils.py         # Shared utilities for Neptune operations
 ├── neptune.yaml            # CloudFormation template for Neptune infrastructure
 ├── requirements.txt        # Python package dependencies
-└── toxic.py               # Toxic access combinations analysis script
+└── toxic.py               # Analyzes toxic access combinations and security risks
 ```
 
 ## Usage Instructions
 ### Prerequisites
 - AWS Account with SSO enabled
-- Python 3.7 or higher
+- Python 3.6 or higher
 - AWS CLI configured with appropriate permissions
 - Amazon Neptune cluster (can be deployed using provided CloudFormation template)
 - IAM permissions for:
@@ -47,10 +47,12 @@ aws configure
 ### Quick Start
 1. Deploy Neptune infrastructure:
 ```bash
-aws cloudformation deploy --template-file neptune.yaml \
-    --stack-name sso-analysis \
-    --parameter-overrides Environment=dev \
-    --capabilities CAPABILITY_IAM
+aws cloudformation deploy \
+  --template-file neptune.yaml \
+  --stack-name sso-analysis \
+  --parameter-overrides \
+    Environment=dev \
+    DBClusterIdentifier=sso-analysis
 ```
 
 2. Collect AWS SSO data:
@@ -58,80 +60,76 @@ aws cloudformation deploy --template-file neptune.yaml \
 python g_collect.py --region us-east-1
 ```
 
-3. Import data to Neptune:
+3. Generate access analysis report:
 ```bash
-python import_json_data.py \
-    --neptune-endpoint <your-neptune-endpoint> \
-    --region us-east-1
-```
-
-4. Generate access analysis report:
-```bash
-python generate_report.py \
-    --neptune-endpoint <your-neptune-endpoint> \
-    --email user@example.com
+python generate_report.py --email user@example.com
 ```
 
 ### More Detailed Examples
-1. Analyze toxic access combinations:
-```bash
+1. Analyze toxic combinations:
+```python
 python toxic.py \
-    --neptune-endpoint <your-neptune-endpoint> \
-    --region us-east-1 \
-    --output-dir reports
+  --neptune-endpoint your-neptune-endpoint \
+  --region us-east-1 \
+  --output-dir reports \
+  --toxic
 ```
 
 2. Generate organization-wide report:
-```bash
+```python
 python generate_report.py \
-    --neptune-endpoint <your-neptune-endpoint> \
-    --org-report
+  --org-report \
+  --output-dir reports
 ```
 
 ### Troubleshooting
 1. Neptune Connection Issues
-- Error: "Failed to connect to Neptune"
-  ```bash
-  # Verify security group settings
-  aws ec2 describe-security-groups --group-ids <security-group-id>
-  
-  # Check Neptune status
-  aws neptune describe-db-clusters --db-cluster-identifier <cluster-id>
-  ```
+   - Error: "Failed to connect to Neptune endpoint"
+   - Solution: 
+     ```bash
+     # Verify security group settings
+     aws ec2 describe-security-groups --group-ids <security-group-id>
+     
+     # Test network connectivity
+     nc -zv <neptune-endpoint> 8182
+     ```
 
-2. Data Import Failures
-- Error: "S3 access denied"
-  ```bash
-  # Verify IAM permissions
-  aws iam get-role --role-name <role-name>
-  
-  # Check S3 bucket permissions
-  aws s3api get-bucket-policy --bucket <bucket-name>
-  ```
+2. Data Collection Errors
+   - Error: "Access denied when calling AWS SSO service"
+   - Solution: Verify IAM permissions and run:
+     ```bash
+     aws sts get-caller-identity
+     aws sso-admin list-instances
+     ```
+
+3. Performance Optimization
+   - Monitor Neptune metrics in CloudWatch
+   - Use batch loading for large datasets
+   - Enable Neptune slow query logs:
+     ```bash
+     aws neptune modify-db-cluster \
+       --db-cluster-identifier <cluster-id> \
+       --enable-cloudwatch-logs-exports '["slowquery"]'
+     ```
 
 ## Data Flow
-The tool follows a three-stage process: collection, analysis, and reporting. It collects AWS SSO data, transforms it into a graph structure, and generates security analysis reports.
+The tool processes AWS SSO access data through a graph-based analysis pipeline, transforming organizational hierarchy and permissions into actionable security insights.
 
 ```ascii
-AWS Services         Graph Database            Analysis & Reporting
-+------------+      +--------------+          +------------------+
-|   AWS SSO  |      |              |          |   User Access    |
-|  Identity  |----->|   Neptune    |--------->|     Report       |
-|    Store   |      |   Database   |          |                  |
-+------------+      |              |          |   Toxic Access   |
-|    AWS     |----->|  (Vertices   |--------->|    Analysis     |
-|   Orgs    |      |   & Edges)   |          |                  |
-+------------+      +--------------+          +------------------+
+AWS Services         Graph Processing           Analysis & Reporting
+[SSO Service]    →   [Neptune DB]         →    [Access Reports]
+[Identity Store] →   [Graph Vertices]     →    [Toxic Combinations]
+[Organizations]  →   [Graph Edges]        →    [Security Insights]
 ```
 
 Component interactions:
-1. AWS SSO data is collected using boto3 API calls
-2. Data is transformed into vertices and edges
-3. Graph data is loaded into Neptune using Gremlin
-4. Analysis queries are executed using Gremlin traversals
-5. Results are processed and formatted into HTML reports
-6. Reports are generated with detailed security findings
-7. Error handling and logging throughout the pipeline
+1. AWS service APIs provide raw access data
+2. Data collector transforms data into graph structure
+3. Neptune database stores and indexes the graph
+4. Analysis modules traverse the graph for patterns
+5. Report generator creates HTML output
+6. Security checks identify risky combinations
+7. Batch processing handles large-scale updates
 
 ## Infrastructure
 
@@ -141,47 +139,21 @@ Component interactions:
   - Identifier: db-neptune-1
   - Engine Version: 1.4.3.0
   - IAM Authentication: Enabled
-  - Encryption: KMS
-  - Logging: Audit and Slow Query logs
+  - Encryption: KMS-based
+  - Logging: Audit and slow query logs enabled
 
 ### Network Resources
 - SecurityGroup (AWS::EC2::SecurityGroup)
-  - Purpose: Neptune cluster access control
-  - Inbound: TCP 8182 from VPC CIDR
+  - Purpose: Controls access to Neptune cluster
+  - Inbound rules for port 8182
 - DBSubnetGroup (AWS::Neptune::DBSubnetGroup)
-  - Purpose: Multi-AZ subnet configuration
+  - Purpose: Defines network placement
+  - Uses private subnets for security
 
 ### Database Instances
-- Primary Instance (AWS::Neptune::DBInstance)
+- PrimaryDBInstance (AWS::Neptune::DBInstance)
   - Class: Configurable (default: db.r6g.large)
-  - High Availability: Single AZ
-- Replica Instance (AWS::Neptune::DBInstance)
-  - Conditional: Created only in production
-  - Class: Matches primary instance
-
-## Deployment
-### Prerequisites
-- VPC with at least two private subnets
-- KMS key for encryption
-- IAM roles and permissions
-
-### Deployment Steps
-1. Configure parameters in neptune.yaml
-2. Deploy CloudFormation stack:
-```bash
-aws cloudformation deploy \
-    --template-file neptune.yaml \
-    --stack-name neptune-sso-analysis \
-    --parameter-overrides \
-        Environment=prod \
-        DBInstanceClass=db.r6g.xlarge \
-    --capabilities CAPABILITY_IAM
-```
-
-3. Configure environment variables:
-```bash
-export NEPTUNE_ENDPOINT=$(aws cloudformation describe-stacks \
-    --stack-name neptune-sso-analysis \
-    --query 'Stacks[0].Outputs[?OutputKey==`ClusterEndpoint`].OutputValue' \
-    --output text)
-```
+  - High availability in primary AZ
+- ReplicaDBInstance (AWS::Neptune::DBInstance)
+  - Only deployed in production
+  - Provides read scaling and failover
