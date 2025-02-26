@@ -31,11 +31,47 @@ def clear_neptune_database(g):
     """
     debug_log("Clearing all data from Neptune database...")
     try:
-        # Using toList() instead of iterate() to ensure traversal is properly executed
-        g.V().drop().toList()
+        debug_log("Fixing traversers attribute error - using next() instead of toList()")
+        # Use next() which doesn't have the traversers issue
+        g.V().drop().next()
         debug_log("Successfully cleared all vertices and edges from the database")
     except Exception as e:
-        debug_log(f"Error clearing database: {str(e)}")
+        debug_log(f"Error in clear_neptune_database: {str(e)}")
+        # Fall back to safe_clear_neptune_database
+        safe_clear_neptune_database(g)
+        
+def safe_clear_neptune_database(g):
+    """Alternative method to clear Neptune database that avoids the ResultSet issue.
+    
+    Args:
+        g: Neptune graph traversal source or connection
+        
+    Raises:
+        ValueError: If g is None
+        AttributeError: If connection retrieval fails
+        Exception: For other errors during clearing
+    """
+    debug_log("Using safe alternative method to clear database...")
+    
+    # First validate we have a graph object
+    if g is None:
+        debug_log("Cannot clear database - graph object is None")
+        raise ValueError("Graph traversal source cannot be None")
+        
+    try:
+        # Try to get the remote connection if it's a traversal source
+        if hasattr(g, 'remote_connection'):
+            conn = g.remote_connection
+            if conn is None:
+                debug_log("Remote connection is None")
+                raise ValueError("Remote connection is None")
+            conn.submit("g.V().drop()").all().result()
+        else:
+            # Assume g is the client connection itself
+            g.submit("g.V().drop()").all().result()
+        debug_log("Successfully cleared database using safe method")
+    except Exception as e:
+        debug_log(f"Error in safe clear method: {str(e)}")
         raise
 
 def get_neptune_auth_headers():
