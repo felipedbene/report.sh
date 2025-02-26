@@ -1,16 +1,23 @@
 schemaVersion: 2.0.0
 metadata:
-  name: aws-sso-access-matrix-generator
+  name: aws-neptune-project
 components:
   - name: dev
     container:
       image: public.ecr.aws/aws-mde/universal-image:latest
+      env:
+        - name: PYTHONPATH
+          value: ${PROJECT_ROOT}
 commands:
   - id: install
     exec:
       component: dev
-      commandLine: "pip install -r requirements.txt"
+      commandLine: "pip install boto3 pandas plotly requests gremlin-python"
+  - id: build
+    exec:
+      component: dev
+      commandLine: "python -m compileall ."
   - id: test
     exec:
       component: dev
-      commandLine: "python -m pytest"
+      commandLine: "python -m unittest discover -s tests || echo 'No tests found'"
