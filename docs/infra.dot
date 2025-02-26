@@ -1,0 +1,17 @@
+digraph INFRA {
+  node [ color = "black", fillcolor = "#E6E6E6", height =1, style = "filled,bold,rounded", fontname = "Arial" ];
+  "NeptuneSecurityGroup" [ label = "NeptuneSecurityGroup
+(AWS::EC2::SecurityGroup)", shape =rectangle ];
+  "NeptuneSubnetGroup" [ label = "NeptuneSubnetGroup
+(AWS::Neptune::DBSubnetGroup)", shape =rectangle ];
+  "NeptuneDBCluster" [ label = "NeptuneDBCluster
+(AWS::Neptune::DBCluster)", shape =cylinder, fillcolor = "#FFCFB3" ];
+  "PrimaryDBInstance" [ label = "PrimaryDBInstance
+(AWS::Neptune::DBInstance)", shape =cylinder, fillcolor = "#FFCFB3" ];
+  "ReplicaDBInstance" [ label = "ReplicaDBInstance
+(AWS::Neptune::DBInstance)", shape =cylinder, fillcolor = "#FFCFB3" ];
+  "NeptuneDBCluster" -> "NeptuneSubnetGroup";
+  "NeptuneDBCluster" -> "NeptuneSecurityGroup";
+  "PrimaryDBInstance" -> "NeptuneDBCluster";
+  "ReplicaDBInstance" -> "NeptuneDBCluster";
+}
