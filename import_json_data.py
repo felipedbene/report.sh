@@ -89,31 +89,64 @@ def connect_to_neptune(args):
         raise
 
 def load_json_from_s3(args):
-    """Load JSON data from S3 bucket"""
+    """Load JSON data from S3 bucket or local file if available"""
     try:
-        print("Loading JSON data from S3...")
+        print("Loading JSON data...")
         s3_key = [f"{args.s3_prefix}edges.json", f"{args.s3_prefix}vertices.json"]
         
-        print(f"Using S3 bucket: {args.s3_bucket}, key: {s3_key}")
-        
-        s3_client = boto3.client('s3', region_name=args.region)
         vertices = []
         edges = []
         
         for key in s3_key:
+            # Check if local file exists first
+            local_filename = os.path.basename(key)
+            if os.path.exists(local_filename):
+                try:
+                    print(f"Loading from local file: {local_filename}")
+                    with open(local_filename, 'r') as f:
+                        data = json.load(f)
+                    
+                    if 'vertices.json' in key:
+                        vertices = data if isinstance(data, list) else data.get('vertices', [])
+                        print(f"Loaded {len(vertices)} vertices from local file")
+                    elif 'edges.json' in key:
+                        edges = data if isinstance(data, list) else data.get('edges', [])
+                        print(f"Loaded {len(edges)} edges from local file")
+                    continue  # Skip S3 download if local file was successfully loaded
+                except Exception as e:
+                    print(f"Error loading local file {local_filename}: {str(e)}")
+                    print("Falling back to S3...")
+            
+            # If local file doesn't exist or couldn't be loaded, try S3
             try:
+                print(f"Using S3 bucket: {args.s3_bucket}, key: {key}")
+                s3_client = boto3.client('s3', region_name=args.region)
                 print(f"Loading from S3: {args.s3_bucket}/{key}")
                 response = s3_client.get_object(Bucket=args.s3_bucket, Key=key)
                 data = json.loads(response['Body'].read().decode('utf-8'))
                 
                 if 'vertices.json' in key:
                     vertices = data if isinstance(data, list) else data.get('vertices', [])
-                    print(f"Loaded {len(vertices)} vertices")
+                    print(f"Loaded {len(vertices)} vertices from S3")
+                    # Save the data to a local file for future use
+                    try:
+                        with open(local_filename, 'w') as f:
+                            json.dump(data, f)
+                        print(f"Saved vertices data to local file: {local_filename}")
+                    except Exception as e:
+                        print(f"Error saving to local file {local_filename}: {str(e)}")
                 elif 'edges.json' in key:
                     edges = data if isinstance(data, list) else data.get('edges', [])
-                    print(f"Loaded {len(edges)} edges")
+                    print(f"Loaded {len(edges)} edges from S3")
+                    # Save the data to a local file for future use
+                    try:
+                        with open(local_filename, 'w') as f:
+                            json.dump(data, f)
+                        print(f"Saved edges data to local file: {local_filename}")
+                    except Exception as e:
+                        print(f"Error saving to local file {local_filename}: {str(e)}")
             except Exception as e:
-                print(f"Error loading {key}: {str(e)}")
+                print(f"Error loading {key} from S3: {str(e)}")
         
         return vertices, edges
     except Exception as e:
@@ -252,6 +285,13 @@ def load_edges_batch(g, edges, batch_size=DEFAULTS["BATCH_SIZE"], error_logger=N
                     from_clean = clean_entity_id(from_id, 'Group')
                     to_clean = clean_entity_id(to_id, 'Account')
                     
+                    # Verify vertices exist before creating edge
+                    from_exists = g.V().has('Group', 'groupId', from_clean).count().next() > 0
+                    to_exists = g.V().has('Account', 'accountId', to_clean).count().next() > 0
+                    
+                    if not from_exists or not to_exists:
+                        raise Exception(f"Missing vertices: Group exists: {from_exists}, Account exists: {to_exists}")
+                    
                     g.V().has('Group', 'groupId', from_clean)\
                         .addE(label)\
                         .to(__.V().has('Account', 'accountId', to_clean))\
@@ -263,6 +303,13 @@ def load_edges_batch(g, edges, batch_size=DEFAULTS["BATCH_SIZE"], error_logger=N
                     from_clean = clean_entity_id(from_id, 'Group')
                     to_clean = clean_entity_id(to_id, 'PermissionSet')
                     
+                    # Verify vertices exist before creating edge
+                    from_exists = g.V().has('Group', 'groupId', from_clean).count().next() > 0
+                    to_exists = g.V().has('PermissionSet', 'arn', to_clean).count().next() > 0
+                    
+                    if not from_exists or not to_exists:
+                        raise Exception(f"Missing vertices: Group exists: {from_exists}, PermissionSet exists: {to_exists}")
+                    
                     g.V().has('Group', 'groupId', from_clean)\
                         .addE(label)\
                         .to(__.V().has('PermissionSet', 'arn', to_clean))\
@@ -271,9 +318,11 @@ def load_edges_batch(g, edges, batch_size=DEFAULTS["BATCH_SIZE"], error_logger=N
                 
                 processed_edges.add(edge_key)
                 successful += 1
-                debug_log(f"Successfully added edge from {edge['from_vertex']} to {edge['to_vertex']}")
+                if error_logger:
+                    error_logger.log_debug(f"Successfully added edge from {edge['from']} to {edge['to']}")
             except Exception as e:
-                debug_log(f"Error adding edge from {edge['from_vertex']} to {edge['to_vertex']}: {str(e)}")
+                if error_logger:
+                    error_logger.log_debug(f"Error adding edge from {edge['from']} to {edge['to']}: {str(e)}")
                 failed += 1
                 if error_logger:
                     error_logger.log_error(f"Error in edge ({label}):", {
