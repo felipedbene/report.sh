@@ -1,3 +1,11 @@
+# /// script
+# requires-python = ">=3.13"
+# dependencies = [
+#     "boto3>=1.15.0",
+#     "gremlin-python>=3.5.0",
+#     "neptune-python-utils>=1.0.0",
+# ]
+# ///
 import os
 import json
 import boto3
